@@ -5,6 +5,11 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <sys/stat.h>    // For stat()
+#include <sys/syscall.h> // For syscall()
+#include <linux/stat.h>  // For statx() and STATX_BTIME
+#include <fcntl.h>       // For AT_FDCWD
+#include <unistd.h>      // For syscall()
 
 using namespace std;
 
@@ -18,6 +23,48 @@ static time_t toTimeT(const fs::file_time_type& ftime) {
         ftime - fs::file_time_type::clock::now() + chrono::system_clock::now()
     );
     return chrono::system_clock::to_time_t(sctp);
+}
+
+// Helper struct to hold all file timestamps
+struct FileTimestamps {
+    time_t mtime{0};  // Modification time
+    time_t atime{0};  // Access time
+    time_t ctime{0};  // Creation time (birth time)
+};
+
+// Helper function to get all timestamps using statx() for creation time
+static FileTimestamps getTimestamps(const fs::path& p) {
+    FileTimestamps ts;
+    
+    // Use statx() to get birth time (creation time) - available on Linux 4.11+
+    struct statx stxbuf;
+    
+    // Call statx via syscall for better compatibility
+    int ret = syscall(SYS_statx, AT_FDCWD, p.c_str(), 0, 
+                      STATX_BASIC_STATS | STATX_BTIME, &stxbuf);
+    
+    if (ret == 0) {
+        ts.mtime = stxbuf.stx_mtime.tv_sec;  // Last modification time
+        ts.atime = stxbuf.stx_atime.tv_sec;  // Last access time
+        
+        // Use birth time (creation time) if available
+        if (stxbuf.stx_mask & STATX_BTIME) {
+            ts.ctime = stxbuf.stx_btime.tv_sec;  // Creation time (birth time)
+        } else {
+            // Fallback to mtime if birth time not supported
+            ts.ctime = stxbuf.stx_mtime.tv_sec;
+        }
+    } else {
+        // Fallback to regular stat() if statx() fails
+        struct stat statbuf;
+        if (stat(p.c_str(), &statbuf) == 0) {
+            ts.mtime = statbuf.st_mtime;
+            ts.atime = statbuf.st_atime;
+            ts.ctime = statbuf.st_mtime;  // Use mtime as fallback
+        }
+    }
+    
+    return ts;
 }
 
 // Helper function for case-insensitive string search
@@ -88,18 +135,11 @@ vector<FileInfo> listDirectory(const fs::path& dir) {
             info.size = 0;  // Directories show "-" in display
         }
 
-        // Get timestamps
-        try {
-            info.mtime = toTimeT(entry.last_write_time());
-            // Note: C++17 filesystem doesn't provide atime/ctime directly
-            // We use mtime as approximation for all timestamps
-            info.atime = info.mtime;
-            info.ctime = info.mtime;
-        } catch (...) {
-            info.mtime = 0;
-            info.atime = 0;
-            info.ctime = 0;
-        }
+        // Get timestamps using POSIX stat() for accurate atime/ctime
+        FileTimestamps ts = getTimestamps(entry.path());
+        info.mtime = ts.mtime;
+        info.atime = ts.atime;
+        info.ctime = ts.ctime;
 
         result.push_back(info);
     }
@@ -129,18 +169,11 @@ FileInfo getFileInfo(const fs::path& p, bool calcDirSize) {
         info.size = fs::file_size(p);
     }
 
-    // Get timestamps
-    try {
-        info.mtime = toTimeT(fs::last_write_time(p));
-        // C++17 doesn't provide direct access to atime/ctime
-        // Using mtime as approximation
-        info.atime = info.mtime;
-        info.ctime = info.mtime;
-    } catch (...) {
-        info.mtime = 0;
-        info.atime = 0;
-        info.ctime = 0;
-    }
+    // Get timestamps using POSIX stat() for accurate atime/ctime
+    FileTimestamps ts = getTimestamps(p);
+    info.mtime = ts.mtime;
+    info.atime = ts.atime;
+    info.ctime = ts.ctime;
 
     return info;
 }
@@ -206,15 +239,11 @@ vector<FileInfo> searchRecursive(
                 info.size = 0;
             }
 
-            try {
-                info.mtime = toTimeT(entry.last_write_time());
-                info.atime = info.mtime;
-                info.ctime = info.mtime;
-            } catch (...) {
-                info.mtime = 0;
-                info.atime = 0;
-                info.ctime = 0;
-            }
+            // Get timestamps using POSIX stat()
+            FileTimestamps ts = getTimestamps(entry.path());
+            info.mtime = ts.mtime;
+            info.atime = ts.atime;
+            info.ctime = ts.ctime;
 
             result.push_back(info);
         }
