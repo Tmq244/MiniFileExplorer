@@ -14,7 +14,18 @@ int main(int argc,char* argv[]){
 
     try{
         if(argc>1){
-            ctx.currentDir=fs::weakly_canonical(argv[1]);
+            fs::path specifiedDir = fs::weakly_canonical(argv[1]);
+            // Check if the specified directory exists
+            if(!fs::exists(specifiedDir)){
+                cerr<<"Directory not found: "<<argv[1]<<endl;
+                return 1;
+            }
+            // Check if it's actually a directory (not a file)
+            if(!fs::is_directory(specifiedDir)){
+                cerr<<"Not a directory: "<<argv[1]<<endl;
+                return 1;
+            }
+            ctx.currentDir = specifiedDir;
         }else{
             ctx.currentDir=fs::current_path();
         }
