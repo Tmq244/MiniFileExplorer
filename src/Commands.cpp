@@ -143,7 +143,18 @@ void registerBuiltInCommands(CommandRegistry& registry) {
                 }
 
                 string typeStr = entry.isDirectory ? "Dir" : "File";
-                string sizeStr = entry.isDirectory ? "-" : to_string(entry.size);
+                // When sorting by size, show calculated directory sizes
+                // Otherwise show "-" for directories
+                string sizeStr;
+                if (entry.isDirectory) {
+                    if (sortBySize) {
+                        sizeStr = to_string(entry.size);  // Show calculated size
+                    } else {
+                        sizeStr = "-";
+                    }
+                } else {
+                    sizeStr = to_string(entry.size);
+                }
 
                 cout << left << setw(30) << displayName
                      << setw(8) << typeStr
