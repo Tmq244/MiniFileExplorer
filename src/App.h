@@ -13,4 +13,4 @@ private:
     const CommandRegistry& registry_;
     void printPrompt() const;
     void executeLine(const std::string& line) const;
-}
+};
